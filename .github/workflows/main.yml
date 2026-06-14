@@ -21,15 +21,12 @@ jobs:
         run: |
           mkdir -p www
           cp Index.html www/index.html
-          cp icon.png www/icon.png
 
       - run: npm install
 
       - run: npx cap add android
 
-      - run: npx cap sync android
-
-      - name: Create App Icons
+      - name: Install ImageMagick and Create Icons
         run: |
           sudo apt-get install -y imagemagick
           mkdir -p android/app/src/main/res/mipmap-mdpi
@@ -47,6 +44,8 @@ jobs:
           cp android/app/src/main/res/mipmap-xhdpi/ic_launcher.png   android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png
           cp android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png  android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png
           cp android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
+
+      - run: npx cap sync android
 
       - name: Build APK
         run: |
