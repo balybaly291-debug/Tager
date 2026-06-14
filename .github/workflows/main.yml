@@ -284,16 +284,13 @@ jobs:
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
-                  // إيقاف الأيقونة العائمة عند فتح التطبيق
                   stopService(new Intent(this, FloatingService.class));
-                  // تشغيل الخدمة في الخلفية
                   Intent serviceIntent = new Intent(this, BackgroundService.class);
                   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                       startForegroundService(serviceIntent);
                   } else {
                       startService(serviceIntent);
                   }
-                  // طلب إذن الأيقونة العائمة
                   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                       if (!Settings.canDrawOverlays(this)) {
                           Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -304,9 +301,8 @@ jobs:
               }
 
               @Override
-              protected void onStop() {
+              public void onStop() {
                   super.onStop();
-                  // تشغيل الأيقونة العائمة عند الخروج
                   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                       if (Settings.canDrawOverlays(this)) {
                           Intent floatIntent = new Intent(this, FloatingService.class);
