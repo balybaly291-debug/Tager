@@ -17,8 +17,16 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Prepare www folder
+        run: |
+          mkdir -p www
+          cp Index.html www/index.html
+          cp icon.png www/icon.png
+
       - run: npm install
+
       - run: npx cap add android
+
       - run: npx cap sync android
 
       - name: Create App Icons
