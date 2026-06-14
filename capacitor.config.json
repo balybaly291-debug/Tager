@@ -1,7 +1,7 @@
 {
   "appId": "com.tajir.app",
   "appName": "تطبيق التاجر",
-  "webDir": ".",
+  "webDir": "www",
   "android": {
     "allowMixedContent": true
   }
