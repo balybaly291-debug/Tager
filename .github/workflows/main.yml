@@ -23,19 +23,303 @@ jobs:
           cp Index.html www/index.html
 
       - run: npm install
-
-      - name: Install Capacitor Assets Tool
-        run: npm install -g @capacitor/assets
-
       - run: npx cap add android
-
-      - name: Generate Icons using Capacitor Assets
-        run: |
-          mkdir -p assets
-          cp icon.png assets/icon.png
-          npx capacitor-assets generate --iconBackgroundColor '#ffffff' --iconBackgroundColorDark '#ffffff' --splashBackgroundColor '#ffffff' --splashBackgroundColorDark '#111111'
-
       - run: npx cap sync android
+
+      - name: Override Icons
+        run: |
+          sudo apt-get install -y imagemagick
+          for size in 48 72 96 144 192; do
+            case $size in
+              48)  folder="mipmap-mdpi" ;;
+              72)  folder="mipmap-hdpi" ;;
+              96)  folder="mipmap-xhdpi" ;;
+              144) folder="mipmap-xxhdpi" ;;
+              192) folder="mipmap-xxxhdpi" ;;
+            esac
+            mkdir -p android/app/src/main/res/$folder
+            convert icon.png -resize ${size}x${size} android/app/src/main/res/$folder/ic_launcher.png
+            convert icon.png -resize ${size}x${size} android/app/src/main/res/$folder/ic_launcher_round.png
+          done
+          rm -rf android/app/src/main/res/mipmap-anydpi-v26
+
+      - name: Add Permissions to AndroidManifest
+        run: |
+          cat > /tmp/manifest_patch.py << 'PYEOF'
+          import re
+
+          with open('android/app/src/main/AndroidManifest.xml', 'r') as f:
+              content = f.read()
+
+          permissions = """
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+              <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+              <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+              <uses-permission android:name="android.permission.WAKE_LOCK"/>
+              <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+              <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+          """
+
+          if 'ACCESS_FINE_LOCATION' not in content:
+              content = content.replace('<application', permissions + '\n    <application', 1)
+
+          if 'usesCleartextTraffic' not in content:
+              content = content.replace(
+                  'android:label=',
+                  'android:usesCleartextTraffic="true" android:label='
+              )
+
+          with open('android/app/src/main/AndroidManifest.xml', 'w') as f:
+              f.write(content)
+
+          print("✅ AndroidManifest updated")
+          PYEOF
+          python3 /tmp/manifest_patch.py
+
+      - name: Register Services in AndroidManifest
+        run: |
+          cat > /tmp/services_patch.py << 'PYEOF'
+          with open('android/app/src/main/AndroidManifest.xml', 'r') as f:
+              content = f.read()
+
+          services = """
+              <service
+                  android:name=".BackgroundService"
+                  android:enabled="true"
+                  android:exported="false"
+                  android:foregroundServiceType="location"/>
+              <service
+                  android:name=".FloatingService"
+                  android:enabled="true"
+                  android:exported="false"/>
+          """
+
+          if 'BackgroundService' not in content:
+              content = content.replace('</application>', services + '\n    </application>')
+
+          with open('android/app/src/main/AndroidManifest.xml', 'w') as f:
+              f.write(content)
+
+          print("✅ Services registered")
+          PYEOF
+          python3 /tmp/services_patch.py
+
+      - name: Create Background Service
+        run: |
+          mkdir -p android/app/src/main/java/com/tajir/app
+          cat > android/app/src/main/java/com/tajir/app/BackgroundService.java << 'EOF'
+          package com.tajir.app;
+
+          import android.app.Notification;
+          import android.app.NotificationChannel;
+          import android.app.NotificationManager;
+          import android.app.PendingIntent;
+          import android.app.Service;
+          import android.content.Intent;
+          import android.os.Build;
+          import android.os.IBinder;
+          import androidx.core.app.NotificationCompat;
+
+          public class BackgroundService extends Service {
+              private static final String CHANNEL_ID = "TajirChannel";
+              private static final int NOTIFICATION_ID = 1;
+
+              @Override
+              public void onCreate() {
+                  super.onCreate();
+                  createNotificationChannel();
+                  startForeground(NOTIFICATION_ID, buildNotification());
+              }
+
+              private Notification buildNotification() {
+                  Intent intent = new Intent(this, MainActivity.class);
+                  PendingIntent pendingIntent = PendingIntent.getActivity(
+                      this, 0, intent,
+                      PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                  );
+                  return new NotificationCompat.Builder(this, CHANNEL_ID)
+                      .setContentTitle("تطبيق التاجر")
+                      .setContentText("التطبيق يعمل في الخلفية")
+                      .setSmallIcon(R.mipmap.ic_launcher)
+                      .setContentIntent(pendingIntent)
+                      .setOngoing(true)
+                      .build();
+              }
+
+              private void createNotificationChannel() {
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      NotificationChannel channel = new NotificationChannel(
+                          CHANNEL_ID, "تطبيق التاجر", NotificationManager.IMPORTANCE_LOW
+                      );
+                      NotificationManager manager = getSystemService(NotificationManager.class);
+                      if (manager != null) manager.createNotificationChannel(channel);
+                  }
+              }
+
+              @Override
+              public int onStartCommand(Intent intent, int flags, int startId) {
+                  return START_STICKY;
+              }
+
+              @Override
+              public IBinder onBind(Intent intent) { return null; }
+          }
+          EOF
+
+      - name: Create Floating Service
+        run: |
+          cat > android/app/src/main/java/com/tajir/app/FloatingService.java << 'EOF'
+          package com.tajir.app;
+
+          import android.app.Service;
+          import android.content.Intent;
+          import android.graphics.PixelFormat;
+          import android.os.IBinder;
+          import android.view.Gravity;
+          import android.view.MotionEvent;
+          import android.view.View;
+          import android.view.WindowManager;
+          import android.widget.ImageView;
+          import android.os.Build;
+
+          public class FloatingService extends Service {
+              private WindowManager windowManager;
+              private View floatingView;
+              private WindowManager.LayoutParams params;
+              private int initialX, initialY;
+              private float initialTouchX, initialTouchY;
+              private boolean isMoving = false;
+
+              @Override
+              public void onCreate() {
+                  super.onCreate();
+                  windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+
+                  ImageView icon = new ImageView(this);
+                  icon.setImageResource(R.mipmap.ic_launcher);
+                  floatingView = icon;
+
+                  int layoutFlag = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                      ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                      : WindowManager.LayoutParams.TYPE_PHONE;
+
+                  params = new WindowManager.LayoutParams(
+                      150, 150,
+                      layoutFlag,
+                      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                      PixelFormat.TRANSLUCENT
+                  );
+                  params.gravity = Gravity.TOP | Gravity.START;
+                  params.x = 100;
+                  params.y = 300;
+
+                  windowManager.addView(floatingView, params);
+
+                  floatingView.setOnTouchListener(new View.OnTouchListener() {
+                      @Override
+                      public boolean onTouch(View v, MotionEvent event) {
+                          switch (event.getAction()) {
+                              case MotionEvent.ACTION_DOWN:
+                                  initialX = params.x;
+                                  initialY = params.y;
+                                  initialTouchX = event.getRawX();
+                                  initialTouchY = event.getRawY();
+                                  isMoving = false;
+                                  return true;
+                              case MotionEvent.ACTION_MOVE:
+                                  int dx = (int)(event.getRawX() - initialTouchX);
+                                  int dy = (int)(event.getRawY() - initialTouchY);
+                                  if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+                                      isMoving = true;
+                                      params.x = initialX + dx;
+                                      params.y = initialY + dy;
+                                      windowManager.updateViewLayout(floatingView, params);
+                                  }
+                                  return true;
+                              case MotionEvent.ACTION_UP:
+                                  if (!isMoving) {
+                                      Intent intent = new Intent(FloatingService.this, MainActivity.class);
+                                      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                                      startActivity(intent);
+                                  }
+                                  return true;
+                          }
+                          return false;
+                      }
+                  });
+              }
+
+              @Override
+              public void onDestroy() {
+                  super.onDestroy();
+                  if (floatingView != null) windowManager.removeView(floatingView);
+              }
+
+              @Override
+              public IBinder onBind(Intent intent) { return null; }
+          }
+          EOF
+
+      - name: Create MainActivity
+        run: |
+          MAIN=$(find android -name "MainActivity.java" | head -1)
+          cat > $MAIN << 'EOF'
+          package com.tajir.app;
+
+          import android.content.Intent;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.provider.Settings;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              private static final int OVERLAY_PERMISSION_CODE = 100;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  // إيقاف الأيقونة العائمة عند فتح التطبيق
+                  stopService(new Intent(this, FloatingService.class));
+                  // تشغيل الخدمة في الخلفية
+                  Intent serviceIntent = new Intent(this, BackgroundService.class);
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      startForegroundService(serviceIntent);
+                  } else {
+                      startService(serviceIntent);
+                  }
+                  // طلب إذن الأيقونة العائمة
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                      if (!Settings.canDrawOverlays(this)) {
+                          Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                              Uri.parse("package:" + getPackageName()));
+                          startActivityForResult(intent, OVERLAY_PERMISSION_CODE);
+                      }
+                  }
+              }
+
+              @Override
+              protected void onStop() {
+                  super.onStop();
+                  // تشغيل الأيقونة العائمة عند الخروج
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                      if (Settings.canDrawOverlays(this)) {
+                          Intent floatIntent = new Intent(this, FloatingService.class);
+                          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                              startForegroundService(floatIntent);
+                          } else {
+                              startService(floatIntent);
+                          }
+                      }
+                  }
+              }
+          }
+          EOF
 
       - name: Build APK
         run: |
